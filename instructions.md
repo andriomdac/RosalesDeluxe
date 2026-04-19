@@ -2,6 +2,14 @@
 
 ## Funcionalidades
 
+### Autenticação
+-> Cadastro de usuários (username, senha)
+-> Login com usuário e senha
+-> Gerar JWT Token
+-> Validar JWT Token
+-> Atualizar JWT Token
+-> Logout
+
 ### Configurações iniciais
 -> Criação do tenant (nome da estética, telefone, endereço, cnpj, etc)
 -> Criação dos Métodos de Pagamento (PIX, DINHEIRO, CARTÃO) vinculados ao tenant
@@ -37,8 +45,8 @@
 ## Regras de Negócio
 
 -> O sistema deve ser capaz de calcular a comissão de funcionários baseado na soma de todos os serviços atrelados a ele no caixa do dia (através do vínculo EmployeeService).
--> O sistema deve ser capaz de calcular o valor total do caixa: Soma(Pagamentos) + Soma(Entradas) - Soma(Saídas).
--> Ao criar uma ordem de serviço, o sistema deve buscar um caixa aberto na data de hoje ou criar um automaticamente, atrelando a OS a ele.
+-> O sistema deve ser capaz de calcular o valor total do caixa: Soma(Pagamentos) + Soma(Entradas).
+-> Ao criar uma ordem de serviço, o sistema deve buscar um caixa aberto na data de hoje ou criar um automaticamente, atrelando a ServiceOrder a ele.
 -> Ao criar um Service para um ServiceOrder, um (ou mais) EmployeeService deve ser criado automaticamente para rastrear a comissão.
--> Travas de Segurança: O banco de dados impede que um objeto de um Tenant seja vinculado a objetos de outro Tenant (ex: OS do Tenant A usando veículo do Tenant B).
+-> Travas de Segurança: O banco de dados impede que um objeto de um Tenant seja vinculado a objetos de outro Tenant (ex: ServiceOrder do Tenant A usando veículo do Tenant B).
 -> Integridade: O sistema impede a exclusão de registros que possuam vínculos históricos (ex: não é possível deletar um veículo que possua ordens de serviço).

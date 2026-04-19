@@ -1,4 +1,5 @@
 from django.db import models
+from django.db.models import Sum
 from decimal import Decimal
 from django.utils import timezone
 from django.core.exceptions import ValidationError
@@ -99,6 +100,7 @@ class ServiceOrder(models.Model):
     """
     Entidade central do sistema que agrupa serviços aplicados a um veículo.
     Relaciona-se com Tenant, Vehicle, ServiceOrderStatus e CashRegister.
+    O campo total_price é calculado automaticamente com base nos Serviços atrelados.
     """
     tenant = models.ForeignKey('Tenant', on_delete=models.CASCADE, related_name='service_orders')
     vehicle = models.ForeignKey('Vehicle', on_delete=models.PROTECT, related_name='service_orders', null=True)
@@ -117,6 +119,11 @@ class ServiceOrder(models.Model):
         if self.cash_register and self.cash_register.tenant != self.tenant:
             raise ValidationError("O caixa deve pertencer ao mesmo Tenant da Ordem de Serviço.")
 
+    def update_total_price(self):
+        total = self.services.aggregate(total=Sum('price'))['total'] or Decimal('0')
+        self.total_price = total
+        ServiceOrder.objects.filter(id=self.id).update(total_price=self.total_price)
+
     def save(self, *args, **kwargs):
         self.clean()
         super().save(*args, **kwargs)
@@ -128,10 +135,20 @@ class Service(models.Model):
     """
     Representa um item de serviço individual dentro de uma Ordem de Serviço (ex: Lavagem Simples).
     Relaciona-se com ServiceOrder e é vinculado a funcionários via EmployeeService.
+    Modificações nesta entidade disparam o recálculo do total_price da Ordem de Serviço pai.
     """
     service_order = models.ForeignKey('ServiceOrder', on_delete=models.CASCADE, related_name='services')
     name = models.CharField(max_length=100)
     price = models.DecimalField(max_digits=10, decimal_places=2)
+
+    def save(self, *args, **kwargs):
+        super().save(*args, **kwargs)
+        self.service_order.update_total_price()
+
+    def delete(self, *args, **kwargs):
+        service_order = self.service_order
+        super().delete(*args, **kwargs)
+        service_order.update_total_price()
 
     def __str__(self):
         return f"{self.name} (Order #{self.service_order.id})"
@@ -158,7 +175,8 @@ class EmployeeService(models.Model):
 class CashRegister(models.Model):
     """
     Representa o controle financeiro diário (Caixa).
-    Relaciona-se com Tenant e agrupa entradas (ServiceOrder) e saídas (Outflow).
+    Relaciona-se com Tenant e agrupa pagamentos, entradas e saídas.
+    O campo total_amount é calculado automaticamente (Pagamentos + Entradas - Saídas).
     """
     tenant = models.ForeignKey('Tenant', on_delete=models.CASCADE, related_name='cash_registers')
     register_date = models.DateField(default=timezone.now)
@@ -169,6 +187,14 @@ class CashRegister(models.Model):
         constraints = [
             models.UniqueConstraint(fields=['tenant', 'register_date'], name='unique_cash_register_date_tenant')
         ]
+
+    def update_total_amount(self):
+        payments_total = self.payments.aggregate(total=Sum('amount'))['total'] or Decimal('0')
+        inflows_total = self.inflows.aggregate(total=Sum('amount'))['total'] or Decimal('0')
+        outflows_total = self.outflows.aggregate(total=Sum('amount'))['total'] or Decimal('0')
+
+        self.total_amount = payments_total + inflows_total - outflows_total
+        CashRegister.objects.filter(id=self.id).update(total_amount=self.total_amount)
 
     def __str__(self):
         status_str = "Open" if self.is_open else "Closed"
@@ -194,6 +220,7 @@ class Payment(models.Model):
     """
     Registra um pagamento efetuado para uma Ordem de Serviço.
     Relaciona-se com ServiceOrder, CashRegister e PaymentMethod.
+    Modificações nesta entidade disparam o recálculo do total_amount do Caixa vinculado.
     """
     service_order = models.ForeignKey('ServiceOrder', on_delete=models.PROTECT, related_name='payments')
     cash_register = models.ForeignKey('CashRegister', on_delete=models.PROTECT, related_name='payments')
@@ -210,6 +237,12 @@ class Payment(models.Model):
     def save(self, *args, **kwargs):
         self.clean()
         super().save(*args, **kwargs)
+        self.cash_register.update_total_amount()
+
+    def delete(self, *args, **kwargs):
+        cash_register = self.cash_register
+        super().delete(*args, **kwargs)
+        cash_register.update_total_amount()
 
     def __str__(self):
         return f"{self.service_order} - {self.payment_method} - ${self.amount}"
@@ -218,11 +251,21 @@ class Inflow(models.Model):
     """
     Registra entradas de dinheiro no caixa (ex: aportes, correções).
     Relaciona-se com CashRegister.
+    Modificações nesta entidade disparam o recálculo do total_amount do Caixa vinculado.
     """
     cash_register = models.ForeignKey('CashRegister', on_delete=models.PROTECT, related_name='inflows')
     description = models.CharField(max_length=255)
     amount = models.DecimalField(max_digits=10, decimal_places=2)
     created_at = models.DateTimeField(auto_now_add=True)
+
+    def save(self, *args, **kwargs):
+        super().save(*args, **kwargs)
+        self.cash_register.update_total_amount()
+
+    def delete(self, *args, **kwargs):
+        cash_register = self.cash_register
+        super().delete(*args, **kwargs)
+        cash_register.update_total_amount()
 
     def __str__(self):
         return f"Inflow: {self.description} - R${self.amount}"
@@ -231,11 +274,21 @@ class Outflow(models.Model):
     """
     Registra saídas de dinheiro do caixa (ex: compra de insumos, pagamentos avulsos).
     Relaciona-se com CashRegister.
+    Modificações nesta entidade disparam o recálculo do total_amount do Caixa vinculado.
     """
     cash_register = models.ForeignKey('CashRegister', on_delete=models.PROTECT, related_name='outflows')
     description = models.CharField(max_length=255)
     amount = models.DecimalField(max_digits=10, decimal_places=2)
     created_at = models.DateTimeField(auto_now_add=True)
+
+    def save(self, *args, **kwargs):
+        super().save(*args, **kwargs)
+        self.cash_register.update_total_amount()
+
+    def delete(self, *args, **kwargs):
+        cash_register = self.cash_register
+        super().delete(*args, **kwargs)
+        cash_register.update_total_amount()
 
     def __str__(self):
         return f"Outflow: {self.description} - R${self.amount}"
